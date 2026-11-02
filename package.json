@@ -1,0 +1,21 @@
+{
+  "name": "commandcode-herdr-desktop-mod",
+  "version": "0.1.0",
+  "description": "Report Command Code session state to the Herdr desktop app (herdr-core) through OSC 7501.",
+  "type": "module",
+  "keywords": [
+    "cmd-mod",
+    "cmd-mod-hook",
+    "herdr",
+    "osc-7501"
+  ],
+  "license": "MIT",
+  "commandcode": {
+    "mods": [
+      "./mods/herdr-status.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types tests/mod.test.mjs"
+  }
+}
