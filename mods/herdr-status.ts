@@ -5,13 +5,14 @@
 //
 //   ESC ] 7501 ; state=working:app=command-code:msg=<base64> ESC \
 //
-// Herdr then shows idle/working/blocked/done in its sidebar and notifications.
+// Herdr then shows idle/working/blocked/done/error in its sidebar and notifications.
 // This mod writes those reports to Command Code's own TTY on lifecycle events.
 // It is a no-op outside a Herdr desktop terminal: herdr-core exports
 // HC_TERMINAL_ID to every program it runs, so that variable is the gate.
 //
 // Install: copy to ~/.commandcode/mods/herdr-status.ts and restart Command Code,
-// or try it with `cmd --mod ./mods/herdr-status.ts`. Disable with CMD_HERDR_OSC=0.
+// or try it with `command-code --mod ./mods/herdr-status.ts`. Disable with
+// CMD_HERDR_OSC=0.
 
 import type {ModApi} from '@commandcode/harness';
 
@@ -20,7 +21,7 @@ const ST = `${ESC}\\`;
 const APP = 'command-code';
 const MAX_MESSAGE = 120;
 
-export type HerdrState = 'idle' | 'working' | 'blocked' | 'done' | 'error';
+export type HerdrState = 'idle' | 'working' | 'blocked' | 'done' | 'error' | 'clear';
 export type HerdrKind = 'permission' | 'question' | 'auth';
 
 export interface ReportMeta {
@@ -49,7 +50,9 @@ export function sanitizeMessage(text: unknown): string | undefined {
 		.replace(/\s+/g, ' ')
 		.trim();
 	if (!line) return undefined;
-	return line.length > MAX_MESSAGE ? line.slice(0, MAX_MESSAGE) : line;
+	// Count code points so truncation never splits a surrogate pair.
+	const chars = Array.from(line);
+	return chars.length > MAX_MESSAGE ? chars.slice(0, MAX_MESSAGE).join('') : line;
 }
 
 export function encodeReport(state: HerdrState, meta: ReportMeta = {}): string {
@@ -65,6 +68,9 @@ export function createReporter(options: ReporterOptions = {}): HerdrReporter {
 	const isTTY = options.isTTY ?? Boolean(process.stdout.isTTY);
 	const write =
 		options.write ?? ((chunk: string) => void process.stdout.write(chunk));
+	// herdr-core accepts reports without the protocol's support query, and reading
+	// stdin for the reply would contend with the TUI's input handling, so this
+	// reporter deliberately does not probe.
 	const enabled =
 		Boolean(env.HC_TERMINAL_ID) && isTTY && env.CMD_HERDR_OSC !== '0';
 
@@ -89,6 +95,10 @@ const INTERACTIVE_TOOLS = new Set([
 	'question',
 	'Question',
 ]);
+
+// Part of the harness event stream but not of the public AgentEventType union.
+export const INTERACTION_REQUESTED = 'interaction_requested';
+export const INTERACTION_RESOLVED = 'interaction_resolved';
 
 function errorText(error: unknown): string {
 	if (error instanceof Error) return error.message;
@@ -117,6 +127,9 @@ export default function herdrStatus(
 	cmd.hooks({
 		onSessionStart: () => {
 			reporter.report('idle', {force: true});
+		},
+		onSessionEnd: () => {
+			reporter.report('clear', {force: true});
 		},
 		onPermissionRequest: ({toolName, description}) => {
 			reporter.report('blocked', {
@@ -157,13 +170,12 @@ export default function herdrStatus(
 	);
 	cmd.on('compaction_done', () => reporter.report('working'));
 
-	// Interaction events carry the permission and question prompts. They are part
-	// of the harness event stream but not of the public AgentEventType union.
+	// Interaction events carry the permission and question prompts.
 	const onAny = cmd.on as (
 		event: string,
 		handler: (event: Record<string, unknown>) => void,
 	) => {dispose(): void};
-	onAny('interaction_requested', (event) => {
+	onAny(INTERACTION_REQUESTED, (event) => {
 		const permission = event.kind === 'permission';
 		reporter.report('blocked', {
 			kind: permission ? 'permission' : 'question',
@@ -171,5 +183,5 @@ export default function herdrStatus(
 			force: true,
 		});
 	});
-	onAny('interaction_resolved', () => reporter.report('working'));
+	onAny(INTERACTION_RESOLVED, () => reporter.report('working'));
 }

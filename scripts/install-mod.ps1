@@ -8,7 +8,7 @@ param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-$base = if ($env:COMMANDCODE_HOME) { $env:COMMANDCODE_HOME } else { Join-Path $HOME '.commandcode' }
+$base = Join-Path $HOME '.commandcode'
 $dest = Join-Path $base 'mods'
 $target = Join-Path $dest 'herdr-status.ts'
 
@@ -21,4 +21,4 @@ if ($Uninstall) {
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item (Join-Path $root 'mods/herdr-status.ts') $target -Force
 Write-Output "Installed $target"
-Write-Output "Restart Command Code (or run /reload), then verify with: cmd mods list"
+Write-Output "Restart Command Code (or run /reload), then verify with: command-code mods list"

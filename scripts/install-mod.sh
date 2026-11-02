@@ -6,7 +6,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-DEST="${COMMANDCODE_HOME:-$HOME/.commandcode}/mods"
+DEST="$HOME/.commandcode/mods"
 TARGET="$DEST/herdr-status.ts"
 
 if [ "${1:-}" = "--uninstall" ]; then
@@ -18,4 +18,4 @@ fi
 mkdir -p "$DEST"
 cp "$ROOT/mods/herdr-status.ts" "$TARGET"
 echo "Installed $TARGET"
-echo "Restart Command Code (or run /reload), then verify with: cmd mods list"
+echo "Restart Command Code (or run /reload), then verify with: command-code mods list"
