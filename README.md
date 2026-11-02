@@ -17,7 +17,7 @@ events.
 As a local mod package, install it at user scope:
 
 ```bash
-cmd mods add -g ./commandcode-herdr-desktop-mod
+command-code mods add -g ./commandcode-herdr-desktop-mod
 ```
 
 > `-g` matters: without it, `mods add` uses project scope and fails with
@@ -31,24 +31,24 @@ sh scripts/install-mod.sh        # ~/.commandcode/mods/herdr-status.ts
 pwsh -File scripts/install-mod.ps1   # Windows
 ```
 
-> On Windows, the Command Code CLI is `cmdc` (or `command-code`); `cmd` is the
-> operating system's shell.
+> `command-code` works on every platform. The POSIX alias is `cmd`; on Windows
+> `cmd` is the operating system's shell, so use `cmdc` or `command-code` there.
 
 Or try it for one session without installing:
 
 ```bash
-cmd --mod ./mods/herdr-status.ts
+command-code --mod ./mods/herdr-status.ts
 ```
 
 Restart Command Code (or run `/reload`), then check:
 
 ```bash
-cmd mods list        # herdr-status
-/herdr-status        # inside a session
+command-code mods list   # herdr-status
+/herdr-status            # inside a session
 ```
 
 Remove with `sh scripts/install-mod.sh --uninstall`, `pwsh -File
-scripts/install-mod.ps1 -Uninstall`, or `cmd mods remove herdr-status`.
+scripts/install-mod.ps1 -Uninstall`, or `command-code mods remove herdr-status`.
 
 ## What it reports
 
@@ -62,14 +62,19 @@ scripts/install-mod.ps1 -Uninstall`, or `cmd mods remove herdr-status`.
 | run error | `error` | with the error message |
 | interrupt | `idle` | |
 | compaction | `working` | `msg=compacting` |
+| session end / reload | `clear` | removes the record |
 
 The sidebar app name is `command-code`. Reports are deduplicated, `msg` is a
 single base64-encoded line, and the mod is a no-op outside a herdr-core terminal
 (`HC_TERMINAL_ID` unset), when stdout is not a TTY, or when `CMD_HERDR_OSC=0`.
 
+The mod does not send the protocol's `ESC ] 7501 ; ?` support probe: herdr-core
+accepts reports without it, and reading stdin for the reply would contend with
+the TUI's input handling.
+
 ## Verify
 
-Start `cmd` in a Herdr desktop terminal, then from a shell:
+Start `command-code` in a Herdr desktop terminal, then from a shell:
 
 ```bash
 hc get <terminal>     # "status": {"app": "command-code", "state": "working"}
@@ -99,7 +104,9 @@ npm test
 ```
 
 Requires Node 22.6+ (the test imports the TypeScript mod directly; Node 23.6+
-needs no flag).
+needs no flag). There is no standalone typecheck: `@commandcode/harness` ships
+inside the CLI and is not published to npm, so the harness types are only
+available at load time.
 
 ## Layout
 

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Report Command Code session state to the Herdr desktop app (herdr-core) through OSC 7501.",
   "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
   "keywords": [
     "cmd-mod",
     "cmd-mod-hook",
