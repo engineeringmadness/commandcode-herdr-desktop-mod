@@ -3,6 +3,8 @@
 Reports a Command Code (`cmd`) session's state to the **Herdr desktop app**
 (`herdr-app` + `herdr-core` / `hc`) so the sidebar, notifications, `hc get` and
 `hc wait` know whether the agent is idle, working, or waiting on you.
+Sub-agents (`explore`, `code review`, and any other `agent` tool run) are
+published as child records under the session's record.
 
 This is a Command Code **mod**. Herdr needs no plugin: it already treats any
 terminal whose program emits **OSC 7501** (the Program Status Protocol) as an
@@ -62,7 +64,10 @@ scripts/install-mod.ps1 -Uninstall`, or `command-code mods remove herdr-status`.
 | run error | `error` | with the error message |
 | interrupt | `idle` | |
 | compaction | `working` | `msg=compacting` |
-| session end / reload | `clear` | removes the record |
+| sub-agent start | `working` | child record `subagents/<key>`, `title=<type>` |
+| sub-agent progress | `working` | `msg=<current tool>` |
+| sub-agent stop | `done` / `error` | `msg=<tokens>`; a failed run is `error` |
+| session end / reload | `clear` | removes the session record and its children |
 
 The sidebar app name is `command-code`. Reports are deduplicated, `msg` is a
 single base64-encoded line, and the mod is a no-op outside a herdr-core terminal
@@ -71,6 +76,27 @@ single base64-encoded line, and the mod is a no-op outside a herdr-core terminal
 The mod does not send the protocol's `ESC ] 7501 ; ?` support probe: herdr-core
 accepts reports without it, and reading stdin for the reply would contend with
 the TUI's input handling.
+
+## Sub-agents
+
+The `agent` tool's nested runs (`explore`, `code review`, and any custom agent)
+are separate 7501 records below the session's root record:
+
+```
+ESC ] 7501 ; state=working:app=command-code:id=subagents/<key>:title=<base64 type>:msg=<base64> ESC \
+```
+
+The key is a stable 12-hex hash of the tool call id, so progress and stop
+reports replace the same record. `title` is the sub-agent type; `msg` is its
+task description, then its current tool, then its token count. A failed
+sub-agent reports `error`; one moved to the background keeps `working` until it
+settles. Clearing the session root removes every child record too.
+
+Herdr-core stores these under `records` in `hc get` / `hc ls --json`, nested by
+the `subagents/...` id. A record-aware client shows them as children of the
+`command-code` agent. The shipped agents pane in Herdr app 0.1.16 builds
+sub-agent rows from herdr-core child terminals instead, so it does not draw 7501
+records yet.
 
 ## Verify
 
@@ -82,6 +108,18 @@ hc wait <terminal>    # waits until the current turn finishes
 ```
 
 The sidebar agent list should show `command-code` with the matching state.
+While a sub-agent runs, `hc get` also shows its child record:
+
+```json
+"records": {
+  "subagents/1a2b3c4d5e6f": {
+    "state": "working",
+    "app": "command-code",
+    "title": "explore",
+    "msg": "find the handler"
+  }
+}
+```
 
 ## How it works
 
@@ -90,6 +128,9 @@ The mod emits one OSC 7501 sequence per state change:
 ```
 ESC ] 7501 ; state=working:app=command-code:msg=<base64> ESC \
 ```
+
+A sub-agent report adds `id=subagents/<key>` and `title=<base64 type>`, so it
+replaces only that child record.
 
 Herdr parses it from the pty, so it works locally, over SSH, and inside
 containers without any environment variables beyond `HC_TERMINAL_ID`.

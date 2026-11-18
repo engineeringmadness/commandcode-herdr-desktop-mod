@@ -6,6 +6,8 @@
 //   ESC ] 7501 ; state=working:app=command-code:msg=<base64> ESC \
 //
 // Herdr then shows idle/working/blocked/done/error in its sidebar and notifications.
+// A sub-agent is a child record (`id=subagents/<key>`) with its own title and
+// message, which the protocol nests under the session's root record.
 // This mod writes those reports to Command Code's own TTY on lifecycle events.
 // It is a no-op outside a Herdr desktop terminal: herdr-core exports
 // HC_TERMINAL_ID to every program it runs, so that variable is the gate.
@@ -14,12 +16,16 @@
 // or try it with `command-code --mod ./mods/herdr-status.ts`. Disable with
 // CMD_HERDR_OSC=0.
 
+import {createHash} from 'node:crypto';
 import type {ModApi} from '@commandcode/harness';
 
 const ESC = '\x1b';
 const ST = `${ESC}\\`;
 const APP = 'command-code';
 const MAX_MESSAGE = 120;
+const MAX_TITLE = 192;
+const MAX_RECORDS = 256;
+const SUBAGENT_PREFIX = 'subagents/';
 
 export type HerdrState = 'idle' | 'working' | 'blocked' | 'done' | 'error' | 'clear';
 export type HerdrKind = 'permission' | 'question' | 'auth';
@@ -27,6 +33,8 @@ export type HerdrKind = 'permission' | 'question' | 'auth';
 export interface ReportMeta {
 	kind?: HerdrKind;
 	message?: string;
+	title?: string;
+	id?: string;
 	force?: boolean;
 }
 
@@ -43,7 +51,7 @@ export interface HerdrReporter {
 
 // OSC 7501 carries one line of human text, base64-encoded. Keep it single-line,
 // free of control characters, and bounded; Herdr rejects oversized payloads.
-export function sanitizeMessage(text: unknown): string | undefined {
+export function sanitizeMessage(text: unknown, max = MAX_MESSAGE): string | undefined {
 	if (typeof text !== 'string') return undefined;
 	const line = text
 		.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ')
@@ -52,12 +60,20 @@ export function sanitizeMessage(text: unknown): string | undefined {
 	if (!line) return undefined;
 	// Count code points so truncation never splits a surrogate pair.
 	const chars = Array.from(line);
-	return chars.length > MAX_MESSAGE ? chars.slice(0, MAX_MESSAGE).join('') : line;
+	return chars.length > max ? chars.slice(0, max).join('') : line;
+}
+
+// `title` is a short label (the protocol caps it at 192 decoded characters).
+export function sanitizeTitle(text: unknown): string | undefined {
+	return sanitizeMessage(text, MAX_TITLE);
 }
 
 export function encodeReport(state: HerdrState, meta: ReportMeta = {}): string {
 	let body = `state=${state}:app=${APP}`;
+	if (meta.id) body += `:id=${meta.id}`;
 	if (meta.kind) body += `:kind=${meta.kind}`;
+	const title = sanitizeTitle(meta.title);
+	if (title) body += `:title=${Buffer.from(title, 'utf8').toString('base64')}`;
 	const message = sanitizeMessage(meta.message);
 	if (message) body += `:msg=${Buffer.from(message, 'utf8').toString('base64')}`;
 	return `${ESC}]7501;${body}${ST}`;
@@ -74,19 +90,49 @@ export function createReporter(options: ReporterOptions = {}): HerdrReporter {
 	const enabled =
 		Boolean(env.HC_TERMINAL_ID) && isTTY && env.CMD_HERDR_OSC !== '0';
 
-	let last = '';
+	// One last report per record id ('' is the root record), so unchanged states
+	// are not re-sent while two sub-agents can report independently.
+	const last = new Map<string, string>();
 
 	return {
 		enabled,
 		report(state, meta = {}) {
 			if (!enabled) return;
+			const id = meta.id ?? '';
+			const title = sanitizeTitle(meta.title);
 			const message = sanitizeMessage(meta.message);
-			const key = `${state}|${meta.kind ?? ''}|${message ?? ''}`;
-			if (!meta.force && key === last) return;
-			last = key;
-			write(encodeReport(state, {kind: meta.kind, message}));
+			const key = `${state}|${meta.kind ?? ''}|${title ?? ''}|${message ?? ''}`;
+			if (!meta.force && last.get(id) === key) return;
+			if (state === 'clear') {
+				if (id) last.delete(id);
+				else last.clear();
+			} else {
+				last.set(id, key);
+				// Mirror the protocol's record cap so a very long session cannot
+				// grow this bookkeeping without bound.
+				if (last.size > MAX_RECORDS) {
+					const oldest = last.keys().next().value;
+					if (oldest !== undefined) last.delete(oldest);
+				}
+			}
+			write(encodeReport(state, {kind: meta.kind, id: meta.id, title, message}));
 		},
 	};
+}
+
+// A stable, protocol-safe record id: each id segment is at most 32 characters
+// from [A-Za-z0-9_.+-]. Tool-call ids are provider-specific, so hash them.
+export function subagentRecordId(toolCallId: string): string {
+	const digest = createHash('sha1').update(toolCallId).digest('hex');
+	return `${SUBAGENT_PREFIX}${digest.slice(0, 12)}`;
+}
+
+function tokensText(tokens: unknown): string | undefined {
+	if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0) {
+		return undefined;
+	}
+	const value = tokens >= 1000 ? `${Math.round(tokens / 100) / 10}k` : String(tokens);
+	return `${value} tokens`;
 }
 
 const INTERACTIVE_TOOLS = new Set([
@@ -99,6 +145,23 @@ const INTERACTIVE_TOOLS = new Set([
 // Part of the harness event stream but not of the public AgentEventType union.
 export const INTERACTION_REQUESTED = 'interaction_requested';
 export const INTERACTION_RESOLVED = 'interaction_resolved';
+export const SUBAGENT_BACKGROUNDED = 'subagent_backgrounded';
+
+interface SubagentEvent {
+	toolCallId?: unknown;
+	subagentType?: unknown;
+	description?: unknown;
+	background?: unknown;
+	toolName?: unknown;
+	tokensUsed?: unknown;
+	status?: unknown;
+}
+
+interface SubagentRef {
+	id: string;
+	type: string;
+	background: boolean;
+}
 
 function errorText(error: unknown): string {
 	if (error instanceof Error) return error.message;
@@ -124,12 +187,50 @@ export default function herdrStatus(
 
 	if (!reporter.enabled) return;
 
+	// Interaction events and subagent backgrounding carry fields outside some
+	// AgentEventType unions, so observe them through the same loose signature.
+	const onAny = cmd.on as (
+		event: string,
+		handler: (event: Record<string, unknown>) => void,
+	) => {dispose(): void};
+
+	const subagents = new Map<string, SubagentRef>();
+
+	const refFor = (
+		toolCallId: string,
+		subagentType: unknown,
+		background = false,
+	): SubagentRef => {
+		const existing = subagents.get(toolCallId);
+		if (existing) return existing;
+		const ref = {
+			id: subagentRecordId(toolCallId),
+			type:
+				typeof subagentType === 'string' && subagentType
+					? subagentType
+					: 'subagent',
+			background,
+		};
+		subagents.set(toolCallId, ref);
+		return ref;
+	};
+
+	const clearForegroundSubagents = () => {
+		for (const [toolCallId, ref] of subagents) {
+			if (ref.background) continue;
+			reporter.report('clear', {id: ref.id, force: true});
+			subagents.delete(toolCallId);
+		}
+	};
+
 	cmd.hooks({
 		onSessionStart: () => {
+			subagents.clear();
 			reporter.report('idle', {force: true});
 		},
 		onSessionEnd: () => {
 			reporter.report('clear', {force: true});
+			subagents.clear();
 		},
 		onPermissionRequest: ({toolName, description}) => {
 			reporter.report('blocked', {
@@ -158,23 +259,94 @@ export default function herdrStatus(
 	});
 
 	cmd.on('run_start', () => reporter.report('working'));
-	cmd.on('run_end', () => reporter.report('done'));
-	cmd.on('run_error', (event) =>
+	cmd.on('run_end', () => {
+		reporter.report('done');
+		clearForegroundSubagents();
+	});
+	cmd.on('run_error', (event) => {
 		reporter.report('error', {
 			message: errorText((event as {error?: unknown}).error),
-		}),
-	);
-	cmd.on('interrupted', () => reporter.report('idle', {force: true}));
+		});
+		clearForegroundSubagents();
+	});
+	cmd.on('interrupted', () => {
+		reporter.report('idle', {force: true});
+		clearForegroundSubagents();
+	});
 	cmd.on('compaction_start', () =>
 		reporter.report('working', {message: 'compacting'}),
 	);
 	cmd.on('compaction_done', () => reporter.report('working'));
 
+	// A failed `agent` tool never emits subagent_stop, so drop its child record.
+	cmd.on('tool_errored', (raw) => {
+		const event = raw as {toolCallId?: unknown};
+		const toolCallId =
+			typeof event.toolCallId === 'string' ? event.toolCallId : '';
+		const ref = subagents.get(toolCallId);
+		if (!ref) return;
+		reporter.report('clear', {id: ref.id, force: true});
+		subagents.delete(toolCallId);
+	});
+
+	// Sub-agents are nested records under the session's root record:
+	// subagents/<key> with the agent type as the title.
+	cmd.on('subagent_start', (raw) => {
+		const event = raw as SubagentEvent;
+		const toolCallId =
+			typeof event.toolCallId === 'string' ? event.toolCallId : '';
+		if (!toolCallId) return;
+		const ref = refFor(toolCallId, event.subagentType, Boolean(event.background));
+		ref.background = Boolean(event.background);
+		reporter.report('working', {
+			id: ref.id,
+			title: ref.type,
+			message:
+				typeof event.description === 'string' && event.description
+					? event.description
+					: ref.type,
+			force: true,
+		});
+	});
+
+	cmd.on('subagent_progress', (raw) => {
+		const event = raw as SubagentEvent;
+		const toolCallId =
+			typeof event.toolCallId === 'string' ? event.toolCallId : '';
+		if (!toolCallId) return;
+		// Recreate the ref so progress still lands after a mod reload.
+		const ref = refFor(toolCallId, event.subagentType);
+		reporter.report('working', {
+			id: ref.id,
+			title: ref.type,
+			message:
+				typeof event.toolName === 'string' ? event.toolName : ref.type,
+		});
+	});
+
+	cmd.on('subagent_stop', (raw) => {
+		const event = raw as SubagentEvent;
+		const toolCallId =
+			typeof event.toolCallId === 'string' ? event.toolCallId : '';
+		if (!toolCallId) return;
+		const ref = refFor(toolCallId, event.subagentType);
+		const failed = event.status === 'failed' || event.status === 'error';
+		reporter.report(failed ? 'error' : 'done', {
+			id: ref.id,
+			title: ref.type,
+			message: tokensText(event.tokensUsed) ?? (failed ? 'failed' : 'done'),
+			force: true,
+		});
+		subagents.delete(toolCallId);
+	});
+
+	onAny(SUBAGENT_BACKGROUNDED, (event) => {
+		const toolCallId = String(event.toolCallId ?? '');
+		const ref = subagents.get(toolCallId);
+		if (ref) ref.background = true;
+	});
+
 	// Interaction events carry the permission and question prompts.
-	const onAny = cmd.on as (
-		event: string,
-		handler: (event: Record<string, unknown>) => void,
-	) => {dispose(): void};
 	onAny(INTERACTION_REQUESTED, (event) => {
 		const permission = event.kind === 'permission';
 		reporter.report('blocked', {
