@@ -93,10 +93,32 @@ sub-agent reports `error`; one moved to the background keeps `working` until it
 settles. Clearing the session root removes every child record too.
 
 Herdr-core stores these under `records` in `hc get` / `hc ls --json`, nested by
-the `subagents/...` id. A record-aware client shows them as children of the
-`command-code` agent. The shipped agents pane in Herdr app 0.1.16 builds
-sub-agent rows from herdr-core child terminals instead, so it does not draw 7501
-records yet.
+the `subagents/...` id.
+
+The shipped agents pane in Herdr app 0.1.16 builds sub-agent rows from herdr-core
+child terminals, not from 7501 records. To draw them in the pane, install the
+companion below.
+
+## Herdr app companion
+
+The companion clones Herdr's shipped agents mod, patches the clone to render
+`subagents/...` records under the terminal that reported them, clones the main
+layout, and switches to that layout:
+
+```bash
+sh scripts/install-herdr-app.sh            # macOS / Linux
+pwsh -File scripts/install-herdr-app.ps1   # Windows
+```
+
+It creates `mods/agents-records` and `layouts/main-records.json` in
+`~/.config/herdr-app` (or `$HERDR_APP_HOME`). Your original `mods/agents` and
+`main` layout stay untouched; switch back with `ctrl-shift-l` or
+`herdr-app do layout.switch --name main`. Remove it with `--uninstall` /
+`-Uninstall`.
+
+The patch targets the agents mod shipped with Herdr app 0.1.16. If Herdr changes
+that file, the installer stops with the name of the section it could not patch
+instead of writing a half-patched view.
 
 ## Verify
 
@@ -156,5 +178,9 @@ available at load time.
 | `mods/herdr-status.ts` | The Command Code mod |
 | `scripts/install-mod.sh` | Loose-file install/remove (POSIX) |
 | `scripts/install-mod.ps1` | Loose-file install/remove (Windows) |
+| `scripts/install-herdr-app.sh` | Herdr app companion install/remove (POSIX) |
+| `scripts/install-herdr-app.ps1` | Herdr app companion install/remove (Windows) |
+| `scripts/patch-agents-mod.mjs` | Adds record rows to the cloned Herdr agents mod |
+| `scripts/patch-herdr-layout.mjs` | Points the cloned layout at `agents-records` |
 | `tests/mod.test.mjs` | Protocol encoding and lifecycle wiring tests |
 | `package.json` | `cmd mods add` package manifest |
