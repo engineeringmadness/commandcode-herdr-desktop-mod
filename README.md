@@ -90,7 +90,9 @@ The key is a stable 12-hex hash of the tool call id, so progress and stop
 reports replace the same record. `title` is the sub-agent type; `msg` is its
 task description, then its current tool, then its token count. A failed
 sub-agent reports `error`; one moved to the background keeps `working` until it
-settles. Clearing the session root removes every child record too.
+settles. While exactly one foreground sub-agent is active, a permission or
+question prompt also marks that child `blocked`; resolving it returns the child
+to `working`. Clearing the session root removes every child record too.
 
 Herdr-core stores these under `records` in `hc get` / `hc ls --json`, nested by
 the `subagents/...` id.
@@ -120,6 +122,11 @@ Clicking a sub-agent row opens a small details popup with its state, current
 tool, and token count, plus a **Focus Command Code** button. Sub-agents run
 in-process, so there is no separate terminal to open; the popup focuses the
 terminal hosting them.
+
+When a sub-agent finishes or fails while its terminal is not focused, the
+companion posts a Herdr toast and plays the `done` or `blocked` sound; clicking
+the toast focuses the terminal. A lone foreground sub-agent also shows
+`blocked` while the session waits on a permission or question prompt.
 
 The patch targets the agents mod shipped with Herdr app 0.1.16. If Herdr changes
 that file, the installer stops with the name of the section it could not patch

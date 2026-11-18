@@ -195,6 +195,38 @@ export default function herdrStatus(
 	) => {dispose(): void};
 
 	const subagents = new Map<string, SubagentRef>();
+	let blockedSubagent: string | undefined;
+
+	// The harness reports an interaction for the run, not which run asked. Only
+	// attribute it to a child when exactly one foreground sub-agent is active.
+	const blockActiveSubagent = (kind: HerdrKind, message: string) => {
+		const foreground = [...subagents.entries()].filter(
+			([, ref]) => !ref.background,
+		);
+		if (foreground.length !== 1) return;
+		const entry = foreground[0];
+		if (!entry) return;
+		const [toolCallId, ref] = entry;
+		if (blockedSubagent === toolCallId) return;
+		blockedSubagent = toolCallId;
+		reporter.report('blocked', {
+			id: ref.id,
+			title: ref.type,
+			kind,
+			message,
+			force: true,
+		});
+	};
+
+	const releaseBlockedSubagent = () => {
+		if (!blockedSubagent) return;
+		const toolCallId = blockedSubagent;
+		blockedSubagent = undefined;
+		const ref = subagents.get(toolCallId);
+		if (ref) {
+			reporter.report('working', {id: ref.id, title: ref.type, force: true});
+		}
+	};
 
 	const refFor = (
 		toolCallId: string,
@@ -218,6 +250,7 @@ export default function herdrStatus(
 	const clearForegroundSubagents = () => {
 		for (const [toolCallId, ref] of subagents) {
 			if (ref.background) continue;
+			if (blockedSubagent === toolCallId) blockedSubagent = undefined;
 			reporter.report('clear', {id: ref.id, force: true});
 			subagents.delete(toolCallId);
 		}
@@ -226,11 +259,13 @@ export default function herdrStatus(
 	cmd.hooks({
 		onSessionStart: () => {
 			subagents.clear();
+			blockedSubagent = undefined;
 			reporter.report('idle', {force: true});
 		},
 		onSessionEnd: () => {
 			reporter.report('clear', {force: true});
 			subagents.clear();
+			blockedSubagent = undefined;
 		},
 		onPermissionRequest: ({toolName, description}) => {
 			reporter.report('blocked', {
@@ -285,6 +320,7 @@ export default function herdrStatus(
 			typeof event.toolCallId === 'string' ? event.toolCallId : '';
 		const ref = subagents.get(toolCallId);
 		if (!ref) return;
+		if (blockedSubagent === toolCallId) blockedSubagent = undefined;
 		reporter.report('clear', {id: ref.id, force: true});
 		subagents.delete(toolCallId);
 	});
@@ -330,6 +366,7 @@ export default function herdrStatus(
 			typeof event.toolCallId === 'string' ? event.toolCallId : '';
 		if (!toolCallId) return;
 		const ref = refFor(toolCallId, event.subagentType);
+		if (blockedSubagent === toolCallId) blockedSubagent = undefined;
 		const failed = event.status === 'failed' || event.status === 'error';
 		reporter.report(failed ? 'error' : 'done', {
 			id: ref.id,
@@ -348,12 +385,14 @@ export default function herdrStatus(
 
 	// Interaction events carry the permission and question prompts.
 	onAny(INTERACTION_REQUESTED, (event) => {
-		const permission = event.kind === 'permission';
-		reporter.report('blocked', {
-			kind: permission ? 'permission' : 'question',
-			message: permission ? String(event.toolName ?? 'permission') : 'input',
-			force: true,
-		});
+		const kind = event.kind === 'permission' ? 'permission' : 'question';
+		const message =
+			kind === 'permission' ? String(event.toolName ?? 'permission') : 'input';
+		reporter.report('blocked', {kind, message, force: true});
+		blockActiveSubagent(kind, message);
 	});
-	onAny(INTERACTION_RESOLVED, () => reporter.report('working'));
+	onAny(INTERACTION_RESOLVED, () => {
+		releaseBlockedSubagent();
+		reporter.report('working');
+	});
 }

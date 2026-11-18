@@ -300,4 +300,107 @@ for (const [label, finish] of [
 	]);
 }
 
+// 19. A lone foreground subagent shows blocked while the run waits on the user.
+{
+	const {writes, events} = mount();
+	const id = subagentRecordId('call_6');
+
+	events.get('subagent_start')({toolCallId: 'call_6', subagentType: 'explore'});
+	events.get(INTERACTION_REQUESTED)({
+		kind: 'permission',
+		toolName: 'shell_command',
+	});
+	events.get(INTERACTION_RESOLVED)();
+
+	assert.deepEqual(writes, [
+		report('working', undefined, 'explore', id, 'explore'),
+		report('blocked', 'permission', 'shell_command'),
+		report('blocked', 'permission', 'shell_command', id, 'explore'),
+		report('working', undefined, undefined, id, 'explore'),
+		report('working'),
+	]);
+}
+
+// 20. A background subagent is not attributed an interaction.
+{
+	const {writes, events} = mount();
+	const id = subagentRecordId('call_7');
+
+	events.get('subagent_start')({
+		toolCallId: 'call_7',
+		subagentType: 'review',
+		background: true,
+	});
+	events.get(INTERACTION_REQUESTED)({kind: 'question'});
+	events.get(INTERACTION_RESOLVED)();
+
+	assert.deepEqual(writes, [
+		report('working', undefined, 'review', id, 'review'),
+		report('blocked', 'question', 'input'),
+		report('working'),
+	]);
+}
+
+// 21. With more than one foreground subagent, the interaction stays on the root.
+{
+	const {writes, events} = mount();
+	const first = subagentRecordId('call_8');
+	const second = subagentRecordId('call_9');
+
+	events.get('subagent_start')({toolCallId: 'call_8', subagentType: 'explore'});
+	events.get('subagent_start')({toolCallId: 'call_9', subagentType: 'general'});
+	events.get(INTERACTION_REQUESTED)({kind: 'permission', toolName: 'write_file'});
+	events.get(INTERACTION_RESOLVED)();
+
+	assert.deepEqual(writes, [
+		report('working', undefined, 'explore', first, 'explore'),
+		report('working', undefined, 'general', second, 'general'),
+		report('blocked', 'permission', 'write_file'),
+		report('working'),
+	]);
+}
+
+// 22. A stopped subagent replaces its blocked row; later interactions have no child.
+{
+	const {writes, events} = mount();
+	const id = subagentRecordId('call_10');
+
+	events.get('subagent_start')({toolCallId: 'call_10', subagentType: 'explore'});
+	events.get(INTERACTION_REQUESTED)({kind: 'permission', toolName: 'shell_command'});
+	events.get('subagent_stop')({
+		toolCallId: 'call_10',
+		subagentType: 'explore',
+		tokensUsed: 20,
+	});
+	events.get(INTERACTION_REQUESTED)({kind: 'question'});
+	events.get(INTERACTION_RESOLVED)();
+
+	assert.deepEqual(writes, [
+		report('working', undefined, 'explore', id, 'explore'),
+		report('blocked', 'permission', 'shell_command'),
+		report('blocked', 'permission', 'shell_command', id, 'explore'),
+		report('done', undefined, '20 tokens', id, 'explore'),
+		report('blocked', 'question', 'input'),
+		report('working'),
+	]);
+}
+
+// 23. Interrupting clears the blocked child with the rest of the tree.
+{
+	const {writes, events} = mount();
+	const id = subagentRecordId('call_11');
+
+	events.get('subagent_start')({toolCallId: 'call_11', subagentType: 'explore'});
+	events.get(INTERACTION_REQUESTED)({kind: 'question'});
+	events.get('interrupted')();
+
+	assert.deepEqual(writes, [
+		report('working', undefined, 'explore', id, 'explore'),
+		report('blocked', 'question', 'input'),
+		report('blocked', 'question', 'input', id, 'explore'),
+		report('idle'),
+		report('clear', undefined, undefined, id),
+	]);
+}
+
 console.log('ok');

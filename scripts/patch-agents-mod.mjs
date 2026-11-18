@@ -122,6 +122,45 @@ const recordPopup = [
 	'  }',
 ].join('\n');
 
+const attentionMethods = [
+	'  alertRecords(all) {',
+	'    const next = new Map();',
+	'    for (const host of all) {',
+	'      const records = host.records;',
+	'      if (!records || typeof records !== "object") continue;',
+	'      for (const [id, record] of Object.entries(records)) {',
+	'        if (!id.startsWith("subagents/") || !record || typeof record !== "object") continue;',
+	'        const key = `${host.address}#${id}`;',
+	'        const state = record.state || "working";',
+	'        next.set(key, state);',
+	'        if (!this.recordsReady) continue;',
+	'        const previous = this.recordStates.get(key);',
+	'        if ((state === "done" || state === "error") && previous !== "done" && previous !== "error") {',
+	'          this.alertRecord(host, id, record, state);',
+	'        }',
+	'      }',
+	'    }',
+	'    this.recordStates = next;',
+	'    this.recordsReady = true;',
+	'  }',
+	'',
+	'  alertRecord(host, id, record, state) {',
+	'    const focus = focused();',
+	'    if (focus?.terminal === host.address) return;',
+	'    const title = record.title || id.slice("subagents/".length);',
+	'    const failed = state === "error";',
+	'    const detail = record.msg ? ` · ${record.msg}` : "";',
+	'    notify({',
+	'      title: `${title} ${failed ? "failed" : "finished"}`,',
+	'      body: `${host.name || host.program?.name || host.address}${detail}`,',
+	'      level: failed ? "error" : "success",',
+	'      icon: host.program?.icon || undefined,',
+	'      action: { name: "pane.focus", args: { terminal: host.address } },',
+	'    });',
+	'    playSound(failed ? "blocked" : "done");',
+	'  }',
+].join('\n');
+
 source = source.replaceAll('mod: "agents"', 'mod: "agents-records"');
 
 const tried = [
@@ -149,6 +188,26 @@ const tried = [
 		'popup render hook',
 		/    if \(props\(\)\?\.sortMenu\) return this\.sortMenu\(t\);/,
 		`    if (props()?.sortMenu) return this.sortMenu(t);${eol}    if (props()?.record) return this.recordPopup(t);`,
+	],
+	[
+		'attention imports',
+		/openOverlay, closeOverlay, props/,
+		'openOverlay, closeOverlay, notify, playSound, props',
+	],
+	[
+		'attention state',
+		/    this\.migratingPins = new Set\(\);/,
+		`    this.migratingPins = new Set();${eol}    this.recordStates = new Map();${eol}    this.recordsReady = false;`,
+	],
+	[
+		'attention methods',
+		/  render\(cx\) \{/,
+		`${withEol(attentionMethods)}${eol}${eol}  render(cx) {`,
+	],
+	[
+		'attention render hook',
+		/    const all = terminals\(\);/,
+		`    const all = terminals();${eol}    this.alertRecords(all);`,
 	],
 ];
 
