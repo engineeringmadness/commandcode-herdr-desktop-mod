@@ -116,6 +116,11 @@ It creates `mods/agents-records` and `layouts/main-records.json` in
 `herdr-app do layout.switch --name main`. Remove it with `--uninstall` /
 `-Uninstall`.
 
+Clicking a sub-agent row opens a small details popup with its state, current
+tool, and token count, plus a **Focus Command Code** button. Sub-agents run
+in-process, so there is no separate terminal to open; the popup focuses the
+terminal hosting them.
+
 The patch targets the agents mod shipped with Herdr app 0.1.16. If Herdr changes
 that file, the installer stops with the name of the section it could not patch
 instead of writing a half-patched view.

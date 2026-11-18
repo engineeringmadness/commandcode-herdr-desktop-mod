@@ -73,7 +73,7 @@ const subRow = [
 	'    const pic = icon(k.program, 14, t.foreground);',
 	'    const on = !k.record && k.address === shown;',
 	'    const click = k.record',
-	'      ? () => k.host && run("pane.focus", { terminal: k.host })',
+	'      ? () => openOverlay({ mod: "agents-records", kind: "popup", width: 360, height: 170, props: { record: { title: k.name, status: st, msg: k.msg, host: k.host } } })',
 	'      : () => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address));',
 	'    return h_flex()',
 	'      .id(`sub-${String(k.address).replace(/[^A-Za-z0-9_.+-]/g, "-")}`)',
@@ -99,6 +99,29 @@ const subRow = [
 	'  }',
 ].join('\n');
 
+const recordPopup = [
+	'  recordPopup(t) {',
+	'    const record = props().record;',
+	'    const close = () => closeOverlay(props().overlay);',
+	'    return v_flex()',
+	'      .size_full()',
+	'      .bg(t.popover)',
+	'      .p(14)',
+	'      .gap(9)',
+	'      .text_size(12.5)',
+	'      .child(div().text_size(14).font_semibold().text_color(t.foreground).child(record.title || "Sub-agent"))',
+	'      .child(div().text_color(t.muted).child(record.msg ? record.status + " · " + record.msg : record.status))',
+	'      .child(div().text_size(11.5).text_color(t.dim).child("This sub-agent runs inside Command Code. Focus its terminal to follow the output."))',
+	'      .child(div().flex_1())',
+	'      .child(h_flex().justify_end().gap(8)',
+	'        .child(div().id("record-focus").px(10).h(24).rounded(6).bg(t.raised).text_color(t.foreground).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => {',
+	'          if (record.host) run("pane.focus", { terminal: record.host });',
+	'          close();',
+	'        }).child("Focus Command Code"))',
+	'        .child(div().id("record-close").px(10).h(24).rounded(6).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(close).child("Close")));',
+	'  }',
+].join('\n');
+
 source = source.replaceAll('mod: "agents"', 'mod: "agents-records"');
 
 const tried = [
@@ -116,6 +139,16 @@ const tried = [
 		'sub-agent row',
 		/  subRow\(t, s, shown, compact\) \{[\s\S]*?\r?\n  \}\r?\n/,
 		`${withEol(subRow)}${eol}`,
+	],
+	[
+		'record popup',
+		/  render\(cx\) \{/,
+		`${withEol(recordPopup)}${eol}${eol}  render(cx) {`,
+	],
+	[
+		'popup render hook',
+		/    if \(props\(\)\?\.sortMenu\) return this\.sortMenu\(t\);/,
+		`    if (props()?.sortMenu) return this.sortMenu(t);${eol}    if (props()?.record) return this.recordPopup(t);`,
 	],
 ];
 
